@@ -30,7 +30,7 @@ optional options:
   -q, --quiet         : Suppress output messages
   -n, --no-clean      : Keep extracted files after installation
 
-flags:
+flags options:
   -d                  : Allow version code downgrade
   -t                  : Allow test packages installation
   -r                  : Replace existing application
