@@ -1,0 +1,7 @@
+Package: neon-termux
+Version: 1.0.0
+Architecture: all
+Maintainer: Adinata (adivenxnataly)
+Depends: android-tools, python, unzip
+Description: Neon - Advanced Bundle Installer for Termux, Install XAPK/APKM packages with root or ADB.
+
