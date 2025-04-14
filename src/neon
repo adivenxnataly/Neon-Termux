@@ -303,7 +303,7 @@ def parse_arguments():
         add_help=False
     )
     
-    help_text = f"""Neon - Advanced Bundle Installer for Termux v1.0.0 @adivenxnataly 2025,
+    help_text = f"""Neon - Advanced Bundle Installer for Termux v{VERSION} @adivenxnataly 2025,
 Install XAPK/APKM packages with root or ADB.
 
 usage: neon [options] <package>
