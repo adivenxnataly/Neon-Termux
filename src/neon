@@ -1,0 +1,387 @@
+#!/data/data/com.termux/files/usr/bin/python3
+
+import sys
+import os
+import re
+import argparse
+import zipfile
+import subprocess
+import json
+import shutil
+from pathlib import Path
+from time import time
+
+GITHUB_REPO = "adivenxnataly/Neon-termux"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+VERSION = "1.0.0"
+VERSION_FILE = Path("/data/data/com.termux/files/home/neon-termux/.neon_version")
+EXTRACT_DIR = Path("/data/data/com.termux/files/home/neon-termux/extracted")
+ADB = "/data/data/com.termux/files/usr/bin/adb"
+
+def get_latest_version():
+    try:
+        try:
+            result = subprocess.run(['curl', '-s', GITHUB_API_URL], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return data.get('tag_name', VERSION).lstrip('v')
+        except:
+            pass
+        
+        try:
+            result = subprocess.run(['wget', '-qO-', GITHUB_API_URL], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return data.get('tag_name', VERSION).lstrip('v')
+        except:
+            pass
+        
+    except Exception as e:
+        if not args.quiet:
+            print(f"Warning: Failed to check latest version ({str(e)}). Using local version.")
+    
+    return VERSION
+
+def show_version():
+    installed_version = "Not installed"
+    if VERSION_FILE.exists():
+        with open(VERSION_FILE, 'r') as f:
+            installed_version = f.read().strip()
+    
+    latest_version = get_latest_version()
+    
+    print(f"Neon Termux Installer by @adivenxnataly")
+    print(f"Current version : {VERSION}")
+    print(f"Latest version : {latest_version}")
+    print(f"Installed version : {installed_version}")
+    
+    if latest_version != VERSION:
+        print("\nUpdate available! Please visit:")
+        print(f"https://github.com/{GITHUB_REPO}/releases")
+
+class Installer:
+    def __init__(self, args):
+        self.args = args
+        self.is_root = self.check_root()
+        self.use_adb = False
+        self.pm_options = self.parse_pm_options()
+        
+        if not self.is_root:
+            if not self.setup_adb():
+                print("\n ⚠️ ADB not connected!")
+                print("\n  Please enable Wireless Debugging and specify port:")
+                print("  1. Enable Developer Options")
+                print("  2. Enable Wireless Debugging --> look for port in (IP Address:Port) section")
+                print("  3. specific argument: neon --adb-port <port> <package>\n")
+                sys.exit(1)
+
+    def check_root(self):
+        try:
+            return subprocess.run(['su', '-c', 'echo test'], 
+                                stdout=subprocess.DEVNULL, 
+                                stderr=subprocess.DEVNULL).returncode == 0
+        except:
+            return False
+
+    def parse_pm_options(self):
+        pm_flags = {
+            'd': '-d',
+            't': '-t',
+            'r': '-r',
+            'i': '-i'
+        }
+        return [pm_flags[opt] for opt in vars(self.args) if opt in pm_flags and getattr(self.args, opt)]
+
+    def setup_adb(self):
+        try:
+            print("\n Checking ADB connection..")
+            
+            result = subprocess.run([ADB, 'devices'], 
+                                  capture_output=True, 
+                                  text=True)
+            devices = [line for line in result.stdout.split('\n')[1:] if line]
+            
+            if any('device' in line for line in devices):
+                print(" success, using existing ADB connection")
+                self.use_adb = True
+                return True
+            
+            print(f" Attempting to connect to localhost:{self.args.adb_port}")
+            result = subprocess.run([ADB, 'connect', f'localhost:{self.args.adb_port}'],
+                                  capture_output=True,
+                                  text=True)
+            
+            if 'connected' in result.stdout:
+                print(f" Successfully connected to ADB at port {self.args.adb_port}")
+                self.use_adb = True
+                return True
+            else:
+                print(" Failed to connect to ADB")
+                return False
+                
+        except Exception as e:
+            print(f"ADB error: {str(e)}")
+            return False
+
+    def extract_bundle(self, bundle_path):
+        try:
+            print(f"\n Extracting {bundle_path}")
+        
+            shutil.rmtree(EXTRACT_DIR, ignore_errors=True)
+            EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
+
+            total_size = 0
+            with zipfile.ZipFile(bundle_path, 'r') as z:
+                total_size = sum(file.file_size for file in z.infolist() if not file.is_dir())
+        
+            extracted_size = 0
+            start_time = time()
+        
+            with zipfile.ZipFile(bundle_path, 'r') as z:
+                for file in z.infolist():
+                    if not file.is_dir():
+                        z.extract(file, EXTRACT_DIR)
+                        extracted_size += file.file_size
+                        
+                        progress = min(100, (extracted_size / total_size) * 100)
+                        elapsed_time = time() - start_time
+                        speed = (extracted_size / elapsed_time) if elapsed_time > 0 else 0
+                    
+                        print(f"\r\033[K Extracted: {progress:.1f}% | Speed: {speed/1024/1024:.1f} MB/s", end='')
+                        sys.stdout.flush()
+        
+            print("\n Extraction completed!")
+        
+            apks = list(EXTRACT_DIR.glob("*.apk"))
+            if not apks:
+                raise ValueError(" No APK found in bundle")
+
+            return sorted(apks, key=lambda x: x.stat().st_size, reverse=True)
+        
+        except Exception as e:
+            print(f"\n Extraction failed: {str(e)}")
+            raise
+
+    def install_package(self, apk_paths, pkg_name):
+        try:
+            if self.is_root:
+                print("\n Method: Root (su)")
+                
+                active_flags = []
+                if self.args.d:
+                    active_flags.append("downgrade (-d)")
+                if self.args.r:
+                    active_flags.append("replace (-r)")
+                if self.args.t:
+                    active_flags.append("test-pkg (-t)")
+                if self.args.i:
+                    active_flags.append("installer (-i)")
+
+                if active_flags:
+                    print(f" Flags: {', '.join(active_flags)}")
+                else:
+                    print(" Flags: none")
+                
+                self.install_with_root(apk_paths, pkg_name)
+            
+            elif self.use_adb:
+                print("\n Method: ADB")
+                active_flags = []
+                if self.args.d:
+                    active_flags.append("downgrade (-d)")
+                if self.args.r:
+                    active_flags.append("replace (-r)")
+                if self.args.t:
+                    active_flags.append("test-pkg (-t)")
+                if self.args.i:
+                    active_flags.append("installer (-i)")
+
+                if active_flags:
+                    print(f" Flags: {', '.join(active_flags)}")
+                else:
+                    print(" Flags: none")
+
+                self.install_with_adb(apk_paths, pkg_name)
+        
+            print(" Installation complete!\n")
+        
+        except Exception as e:
+            print(f"\n Installation failed: {str(e)}")
+            raise
+
+    def install_with_root(self, apk_paths, pkg_name):
+        try:
+            print(" Creating installation session..")
+            result = subprocess.run(['su', '-c', 'pm install-create -r --user 0'],
+                                capture_output=True,
+                                text=True)
+            session_id = re.search(r'\[(\d+)\]', result.stdout).group(1)
+            print(f" Session ID: {session_id}")
+
+            for idx, apk in enumerate(apk_paths, start=1):
+                print(f"\n + Installing {apk.name}")
+            
+                file_size = os.path.getsize(apk)
+            
+                print(f"   Writing to session {session_id}")
+                start_time = time()
+                subprocess.run(['su', '-c', f'pm install-write {session_id} {idx} {apk}'],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+                
+                duration = time() - start_time
+                speed = file_size / duration if duration > 0 else 0
+                print(f"   Speed: {speed/1024/1024:.1f} MB/s | Size: {file_size/1024/1024:.1f} MB")
+                print(f"   stream: {file_size} bytes")
+                print(f"   {apk.name} installed")
+            
+            print("\n Committing installation...")
+            result = subprocess.run(['su', '-c', f'pm install-commit {session_id}'],
+                              capture_output=True,
+                              text=True)
+            print("", result.stdout)
+        
+        except subprocess.CalledProcessError as e:
+            print(f"\n Root command failed: {' '.join(e.cmd)}")
+            if e.stderr:
+                print(f" Error details: {e.stderr}")
+            raise
+
+    def install_with_adb(self, apk_paths, pkg_name):
+        try:
+            print(" Creating installation session..")
+            result = subprocess.run([ADB, 'shell', 'pm', 'install-create', '-r', '--user', '0'],
+                            capture_output=True,
+                            text=True)
+            session_id = re.search(r'\[(\d+)\]', result.stdout).group(1)
+            print(f" Session ID: {session_id}")
+
+            for idx, apk in enumerate(apk_paths, start=1):
+                print(f"\n + Pushing {apk.name}")
+                temp_path = f"/data/local/tmp/{apk.name}"
+        
+                start_time = time()
+                result = subprocess.run([ADB, 'push', str(apk), temp_path],
+                                capture_output=True,
+                                text=True)
+            
+                file_size = os.path.getsize(apk)
+                duration = time() - start_time
+                speed = file_size / duration if duration > 0 else 0
+                print(f"   Speed: {speed/1024/1024:.1f} MB/s | Size: {file_size/1024/1024:.1f} MB")
+            
+                print(f"   Writing to session {session_id}")
+                subprocess.run([ADB, 'shell', 'pm', 'install-write', session_id, str(idx), temp_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL)
+            
+                subprocess.run([ADB, 'shell', 'rm', temp_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL)
+                print(f"   stream: {file_size} bytes")
+                print(f"   {apk.name} streamed")
+            
+            print("\n Committing installation...")
+            result = subprocess.run([ADB, 'shell', 'pm', 'install-commit', session_id],
+                            capture_output=True,
+                            text=True)
+            print("",result.stdout)
+    
+        except subprocess.CalledProcessError as e:
+            print(f"\n ADB command failed: {' '.join(e.cmd)}")
+            if e.stderr:
+                print(f" Error details: {e.stderr}")
+            raise
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage='neon [options] <package>',
+        add_help=False
+    )
+    
+    help_text = f"""Neon - Advanced Bundle Installer for Termux v{VERSION} @adivenxnataly 2025,
+Install XAPK/APKM packages with root or ADB.
+
+usage: neon [options] <package>
+
+required arguments:
+  package             : Path to XAPK/APKM file
+
+options:
+  -h, --help          : Show this help message and exit
+  -v, --version       : Show version information
+  -q, --quiet         : Suppress output messages
+  -n, --no-clean      : Keep extracted files after installation
+ 
+flags:
+  -d                  : Allow version code downgrade
+  -t                  : Allow test packages installation
+  -r                  : Replace existing application
+  -i                  : Specify installer package name
+
+advance options:
+  --install-options   : Custom options
+  --adb-port <port>   : ADB server port (default: 5555)
+"""
+    
+    parser.add_argument('-h', '--help', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('-v', '--version', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('package', nargs='?', help=argparse.SUPPRESS)
+    parser.add_argument('-q', '--quiet', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('-n', '--no-clean', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('-d', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('-t', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('-r', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('-i', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--install-options', help=argparse.SUPPRESS)
+    parser.add_argument('--adb-port', default='5555', help=argparse.SUPPRESS)
+    
+    args = parser.parse_args()
+    
+    if args.help:
+        print(help_text)
+        sys.exit(0)
+        
+    if args.version:
+        show_version()
+        sys.exit(0)
+        
+    if not args.package:
+        print(help_text)
+        sys.exit(1)
+        
+    return args
+
+def main():
+    args = parse_arguments()
+    
+    if not args.package.lower().endswith(('.xapk', '.apkm')):
+        print(" Error: only .xapk and .apkm files supported!")
+        sys.exit(1)
+
+    installer = Installer(args)
+    
+    try:
+        apks = installer.extract_bundle(args.package)
+        pkg_name = apks[0].stem.split('.')[0]
+        installer.install_package(apks, pkg_name)
+
+        # Save installed version
+        VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(VERSION_FILE, 'w') as f:
+            f.write(VERSION)
+
+    except Exception as e:
+        print(f"\n❌ Operation failed: {e}")
+        sys.exit(1)
+
+    finally:
+        if not args.no_clean:
+            shutil.rmtree(EXTRACT_DIR, ignore_errors=True)
+
+if __name__ == "__main__":
+    main()
