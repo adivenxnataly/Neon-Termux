@@ -303,7 +303,7 @@ def parse_arguments():
         add_help=False
     )
     
-    help_text = f"""Neon - Advanced Bundle Installer for Termux v{VERSION} @adivenxnataly 2025,
+    help_text = f"""Neon - Advanced Bundle Installer for Termux v1.0.0 @adivenxnataly 2025,
 Install XAPK/APKM packages with root or ADB.
 
 usage: neon [options] <package>
@@ -311,20 +311,20 @@ usage: neon [options] <package>
 required arguments:
   package             : Path to XAPK/APKM file
 
-options:
+optional options:
   -h, --help          : Show this help message and exit
   -v, --version       : Show version information
   -q, --quiet         : Suppress output messages
   -n, --no-clean      : Keep extracted files after installation
- 
-flags:
+
+flags options:
   -d                  : Allow version code downgrade
   -t                  : Allow test packages installation
   -r                  : Replace existing application
   -i                  : Specify installer package name
 
-advance options:
-  --install-options   : Custom options
+advanced options:
+  --install-options   : Custom installation options (based on `pm install` arguments)
   --adb-port <port>   : ADB server port (default: 5555)
 """
     
