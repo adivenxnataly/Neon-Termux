@@ -10,7 +10,7 @@
 ```shell
 apt update -y && apt upgrade -y
 apt install wget -y
-wget https://github.com/adivenxnataly/Neon-termux/releases/download/1.0.0/neon-termux.deb
+wget https://github.com/adivenxnataly/Neon-Termux/releases/download/1.0.0/neon-termux.deb
 apt install ~/neon-termux.deb
 ```
 
